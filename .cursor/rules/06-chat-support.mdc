@@ -88,7 +88,7 @@ Update the session title in Supabase with the result. This runs after the main r
 
 ## UI Integration (CRITICAL — sidebar placement)
 
-Chat sessions are listed **inside the app sidebar** under a "Conversations" group — NOT in a separate middle panel on the chat page. The sidebar shows the conversations group only when the user is on `/chat`.
+Chat sessions are listed **inside the app sidebar** under a "Conversations" group — NOT in a separate middle panel on the chat page. The conversations group is **always visible** regardless of the current route.
 
 ### Sidebar structure when on `/chat`:
 
@@ -109,7 +109,8 @@ Chat sessions are listed **inside the app sidebar** under a "Conversations" grou
 ```
 
 - Do NOT add a separate "Chat" nav item — the "Conversations" group label serves as the section header.
-- The `[+]` button next to "Conversations" creates a new session.
+- The `[+]` button next to "Conversations" creates a new session and navigates to `/chat`.
+- Clicking a session loads its messages and navigates to `/chat` (if not already there).
 - Each session item shows a delete action on hover via `SidebarMenuAction showOnHover`.
 - The chat page itself (`app/chat/page.tsx`) takes the full content width — no session list panel.
 
