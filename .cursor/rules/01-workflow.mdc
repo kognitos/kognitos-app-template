@@ -13,6 +13,7 @@ Follow the six phases below **in strict order**. Do NOT skip ahead. Do NOT start
 - **Language:** TypeScript only. All code — scripts, helpers, app — must be `.ts` or `.tsx`. No Python scripts.
 - **Framework:** Next.js (App Router) deployed to Vercel.
 - **Styling:** Tailwind CSS (or Lattice UI tokens mapped to Tailwind).
+- **Chat:** Claude (Anthropic SDK) + Supabase for persistence + Kognitos API tools. See `06-chat-support.mdc`.
 - **Arrow IPC decoding:** Use the `apache-arrow` npm package in TypeScript. Never use Python/pyarrow.
 - **Runtime:** Node.js with `tsx` for utility scripts in Phases 1-3.
 

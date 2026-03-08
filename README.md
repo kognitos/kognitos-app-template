@@ -53,11 +53,14 @@ Run `npm install` and verify with `npm ls react` -- every entry should say `dedu
 │   ├── 02-api-discovery.mdc   Kognitos API reference, Phases 1-3
 │   ├── 03-planning-build.mdc  Phases 4-6: planning and build
 │   ├── 04-lattice-ui.mdc      Lattice UI components, tokens, gotchas
-│   └── 05-npm-local-packages.mdc  Local package install pattern
+│   ├── 05-npm-local-packages.mdc  Local package install pattern
+│   └── 06-chat-support.mdc       Claude + Supabase chat architecture
 ├── lib/                   Reusable Kognitos utilities
 │   ├── kognitos.ts            API client, env validation, req()
 │   ├── arrow.ts               Arrow IPC decoding helpers
 │   ├── spy.ts                 Inline code execution
+│   ├── supabase.ts             Supabase client (anon + admin)
+│   ├── chat/                   Chat module (types, context, hook, system prompt)
 │   ├── quill.ts               Quill Chat API + NDJSON parsing
 │   └── types.ts               Generic run types (RunState, RawRun)
 ├── scripts/               Discovery scripts (run with npx tsx)
@@ -82,6 +85,10 @@ Run `npm install` and verify with `npm ls react` -- every entry should say `dedu
 | `KOGNITOS_WORKSPACE_ID` | Workspace ID |
 | `KOGNITOS_BASE_URL` | API base URL (must end with `/api/v1`) |
 | `KOGNITOS_AUTOMATION_ID` | Target automation ID |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (client-side) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-side) |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key |
 
 ## Cursor AI Rules
 
@@ -104,3 +111,5 @@ Each phase has a gate requiring user confirmation before proceeding.
 - **Lattice UI** (`@kognitos/lattice`) for components and design tokens
 - **Recharts v3** for data visualization
 - **apache-arrow** for Arrow IPC decoding
+- **Claude** (Anthropic SDK) for AI chat with Kognitos API tool calling
+- **Supabase** for chat session and message persistence

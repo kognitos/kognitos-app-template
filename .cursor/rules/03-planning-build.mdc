@@ -24,7 +24,7 @@ alwaysApply: true
 ## Phase 5: Build Plan
 
 1. Tech stack is fixed: **Next.js (App Router) + TypeScript + Tailwind CSS + Vercel**. Choose a charting library (e.g., Recharts).
-2. List pages/views: Dashboard, Run Detail, Review Queue, others from Phase 4.
+2. List pages/views: Dashboard, Run Detail, Review Queue, Chat, others from Phase 4.
 3. For each view: data shown, API calls, interactions (click, expand, filter, link out).
 4. Describe data flow: API layer (server routes, caching), transform layer (Arrow IPC, normalization), UI layer.
 5. Confirm domain language mapping: Run → [domain term], status labels, field renames.
@@ -59,20 +59,21 @@ Follow the Phase 5 plan exactly. Do not add unapproved features or skip approved
 **Build order:**
 1. API layer and data fetching (server-side routes, `req()` usage).
 2. Data transformation (Arrow IPC parsing, normalization, derived metrics).
-3. Layout and navigation shell (using design system layouts).
+3. Layout and navigation shell (Sidebar from Lattice, plain divs for page content — see `04-lattice-ui.mdc` Layout Rules).
 4. Hero stats / summary metrics (using design system tokens).
 5. Charts and visualizations (using design system color tokens for palettes).
 6. Tables with drill-down.
 7. Run detail view.
 8. Review queue / Resolution Agent integration (if applicable).
-9. Empty, loading, and error states.
-10. Polish: responsive layout, transitions, final styling.
+9. Chat page: Claude + Supabase + Kognitos API tools (see `06-chat-support.mdc`).
+10. Empty, loading, and error states.
+11. Polish: responsive layout, transitions, final styling.
 
 **Quality standards:**
 - All API calls in Next.js Route Handlers or Server Components — no tokens in client code.
 - All run states handled (pending, executing, completed, failed, stopped, awaiting_guidance).
 - Domain language used consistently — no Kognitos jargon in the UI.
-- Progressive disclosure: summary → detail → link to Kognitos.
+- Progressive disclosure: summary → detail → link to Kognitos. "View Details" and "View in Kognitos" links open the Kognitos platform in a new tab (`target="_blank"`). API routes include a `kognitosUrl` field in run responses (built server-side via `kognitosRunUrl()`) so clients never need env vars to construct the URL.
 - Tables are filterable/sortable where useful.
 - No hardcoded style values if Lattice UI is active — everything flows through tokens.
 - App must be Vercel-deployable: no filesystem writes at runtime, no native dependencies, env vars via Vercel dashboard.

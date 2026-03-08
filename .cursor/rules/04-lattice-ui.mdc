@@ -61,7 +61,7 @@ npm treats `.tgz` like a published package and deduplicates peer deps properly. 
 
 - **Metric cards:** `InsightsCard` / `InsightsCardTrend`
 - **Status badges:** `Badge` with `variant`: `success`, `warning`, `destructive`, `secondary`
-- **Page shell:** `PageLayout` + `PageHeader` + `PageContent`
+- **Page shell:** Plain `<div className="p-6 space-y-6">` inside `SidebarInset`. Do NOT use `PageLayout`/`PageHeader`/`PageContent` — they impose max-width constraints that make content too narrow and cause overlapping issues when a sidebar is present.
 - **Sidebar nav:** `SidebarProvider` + `Sidebar` + `SidebarMenu` + `SidebarMenuItem` + `SidebarMenuButton`
 - **Data tables:** `DataTable` (AG Grid) for rich tables, `Table` for simple HTML tables
 - **Charts:** `ChartContainer` + `ChartTooltip` + `ChartTooltipContent` wrapping Recharts v3
@@ -75,8 +75,11 @@ npm treats `.tgz` like a published package and deduplicates peer deps properly. 
 
 ## Layout Rules
 
+- **Sidebar is always open.** Use `SidebarProvider open={true}` — no toggle, no `SidebarTrigger`. The sidebar is permanently visible.
 - **Sidebar steals width.** When using `SidebarProvider` + `SidebarInset`, the main content area is narrower than the viewport. Account for this in grid breakpoints — e.g. use `grid-cols-2 md:grid-cols-3 xl:grid-cols-5` instead of `md:grid-cols-5`, so cards don't overlap or truncate.
 - As a rule of thumb, delay high column counts (4+) to `xl:` or `2xl:` breakpoints when a sidebar is present.
+- **Root layout structure:** `SidebarInset` wraps a `<div className="flex-1 overflow-auto">` that contains page content. Each page provides its own padding and layout via plain divs — no shared header bar above the content area.
+- **Page title goes inside the page**, not in a shared layout header. Each page renders its own `Title` and subtitle.
 
 ## Styling Rules
 

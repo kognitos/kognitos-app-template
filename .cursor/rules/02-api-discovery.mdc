@@ -169,6 +169,7 @@ Parse `ORG_ID` and `WORKSPACE_ID` directly from the URL path segments.
 3. Create `lib/kognitos.ts` that:
    - Reads and validates all env vars at import time (throw if missing).
    - Exports `req(path, options?)` — builds full URL, attaches `Authorization: Bearer <token>`.
+   - Exports `APP_URL` (base URL without `/api/v1`) and `kognitosRunUrl(runId)` — builds a full Kognitos platform URL for a run (used by API routes to return `kognitosUrl` in run responses, so clients can link out without exposing env vars).
    - Never exposes tokens to client-side code.
 4. Verify connectivity: `GET /organizations/{ORG_ID}/workspaces/{WORKSPACE_ID}/automations?pageSize=50` → confirm 200 and JSON response.
 5. Parse response: automations are in `data.automations[]`, each has `name` (resource path) and `display_name`.
