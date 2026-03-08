@@ -1,0 +1,194 @@
+---
+description: Generic data layer patterns — Kognitos run types, state helpers, safe decoding, and reusable transforms
+globs: "lib/*.ts"
+alwaysApply: false
+---
+
+# Generic Data Layer Patterns
+
+These types and helpers are reusable across any Kognitos app. Domain-specific types (e.g., `PatientRow`, `BatchSummary`) belong in your app code — build them on top of these generic patterns.
+
+## Generic Types (`lib/types.ts`)
+
+```typescript
+export type RunState =
+  | "completed"
+  | "awaiting_guidance"
+  | "failed"
+  | "executing"
+  | "pending"
+  | "stopped";
+
+export interface RunOutput {
+  table?: { inline?: { data?: string } };
+}
+
+export interface RawRun {
+  name: string;
+  create_time: string;
+  update_time?: string;
+  state: {
+    completed?: {
+      outputs?: Record<string, RunOutput>;
+      update_time?: string;
+    };
+    awaiting_guidance?: {
+      exception?: string;
+      description?: string;
+    };
+    failed?: {
+      error?: string;
+      description?: string;
+    };
+    executing?: Record<string, unknown>;
+    pending?: Record<string, unknown>;
+    stopped?: Record<string, unknown>;
+  };
+  user_inputs?: Record<string, { text?: string }>;
+  invocation_details?: {
+    invocation_source?: string;
+    user_id?: string;
+  };
+}
+```
+
+## Run State Helpers (`lib/data.ts`)
+
+```typescript
+import type { RawRun, RunState } from "./types";
+
+function getRunState(run: RawRun): RunState {
+  if (run.state.completed) return "completed";
+  if (run.state.awaiting_guidance) return "awaiting_guidance";
+  if (run.state.failed) return "failed";
+  if (run.state.executing) return "executing";
+  if (run.state.stopped) return "stopped";
+  return "pending";
+}
+
+function getRunId(run: RawRun): string {
+  return run.name.split("/").pop()!;
+}
+
+function getErrorSummary(run: RawRun): string | null {
+  const ag = run.state.awaiting_guidance;
+  if (ag?.description) {
+    const lines = ag.description.split("\n").filter(Boolean);
+    return lines[lines.length - 1]?.trim() ?? ag.description.slice(0, 200);
+  }
+  const f = run.state.failed;
+  if (f?.description) return f.description.slice(0, 200);
+  if (f?.error) return f.error.slice(0, 200);
+  return null;
+}
+```
+
+## Status Label Mapping
+
+Map `RunState` to domain-friendly labels. Replace these with your domain's language during Phase 4:
+
+```typescript
+const STATUS_LABELS: Record<RunState, string> = {
+  completed: "Completed",       // e.g. "Submitted", "Processed"
+  awaiting_guidance: "Needs Attention",
+  failed: "Failed",
+  executing: "Processing",      // e.g. "Running", "In Progress"
+  pending: "Queued",
+  stopped: "Stopped",           // e.g. "Cancelled"
+};
+```
+
+## Safe Arrow Decoding
+
+Always wrap Arrow IPC decoding in try/catch — corrupted or empty base64 data should not crash the app:
+
+```typescript
+import { decodeArrowTable } from "./arrow";
+
+function decodeOutputSafe(b64: string | undefined): Record<string, unknown>[] {
+  if (!b64) return [];
+  try {
+    return decodeArrowTable(b64);
+  } catch {
+    return [];
+  }
+}
+```
+
+## Run Fetching
+
+```typescript
+import { req, ORG_ID, WORKSPACE_ID, AUTOMATION_ID } from "./kognitos";
+import type { RawRun } from "./types";
+
+export async function fetchRuns(): Promise<RawRun[]> {
+  const path = `/organizations/${ORG_ID}/workspaces/${WORKSPACE_ID}/automations/${AUTOMATION_ID}/runs?pageSize=100`;
+  const res = await req(path);
+  if (!res.ok) throw new Error(`Failed to fetch runs: ${res.status}`);
+  const data = (await res.json()) as { runs: RawRun[] };
+  return data.runs ?? [];
+}
+
+export async function fetchRun(runId: string): Promise<RawRun> {
+  const path = `/organizations/${ORG_ID}/workspaces/${WORKSPACE_ID}/automations/${AUTOMATION_ID}/runs/${runId}`;
+  const res = await req(path);
+  if (!res.ok) throw new Error(`Failed to fetch run ${runId}: ${res.status}`);
+  return res.json();
+}
+```
+
+## Reusable Transform Utilities (`lib/transform.ts`)
+
+### Excel Serial Date Parsing
+
+Kognitos automations that read Excel files often return dates as Excel serial numbers:
+
+```typescript
+export function parseExcelDate(serial: string | number): Date | null {
+  const num = typeof serial === "string" ? parseFloat(serial) : serial;
+  if (isNaN(num) || num < 1) return null;
+  const epoch = new Date(1899, 11, 30);
+  epoch.setDate(epoch.getDate() + num);
+  return epoch;
+}
+```
+
+### Currency Formatting
+
+```typescript
+export function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+  }).format(value);
+}
+```
+
+### Date Formatting
+
+```typescript
+import dayjs from "dayjs";
+
+export function formatDate(date: Date | string | null): string {
+  if (!date) return "—";
+  return dayjs(date).format("MMM D, YYYY h:mm A");
+}
+
+export function formatShortDate(date: Date | null): string {
+  if (!date) return "—";
+  return dayjs(date).format("MMM D, YYYY");
+}
+```
+
+## Data Layer Architecture
+
+When building `lib/data.ts` for your app:
+
+1. **fetchRuns / fetchRun** — raw API calls using `req()` from `lib/kognitos.ts`.
+2. **decodeOutputSafe** — safe Arrow IPC decoding per output key.
+3. **buildSummary(run)** — maps a `RawRun` to your domain summary type (e.g., `BatchSummary`, `InvoiceSummary`).
+4. **fetchDashboardData** — aggregates across all runs: hero stats, distributions, trends.
+5. **fetchDetail(runId)** — single-run deep dive: decoded tables, cross-referenced outputs, user inputs.
+
+Domain-specific types and aggregation functions belong here — not in the generic lib files.

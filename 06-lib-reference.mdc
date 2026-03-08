@@ -1,0 +1,321 @@
+---
+description: Reference implementations for core library files every Kognitos app needs
+globs: "lib/*.ts"
+alwaysApply: false
+---
+
+# Core Library Reference Implementations
+
+Use these as starting points when creating `lib/` files during Phases 1-3. Adapt as needed for the specific app.
+
+## `lib/kognitos.ts` — API Client
+
+```typescript
+const TOKEN = process.env.KOGNITOS_TOKEN;
+const ORG_ID = process.env.KOGNITOS_ORG_ID;
+const WORKSPACE_ID = process.env.KOGNITOS_WORKSPACE_ID;
+const BASE_URL = process.env.KOGNITOS_BASE_URL;
+const AUTOMATION_ID = process.env.KOGNITOS_AUTOMATION_ID;
+
+const required = {
+  KOGNITOS_TOKEN: TOKEN,
+  KOGNITOS_ORG_ID: ORG_ID,
+  KOGNITOS_WORKSPACE_ID: WORKSPACE_ID,
+  KOGNITOS_BASE_URL: BASE_URL,
+  KOGNITOS_AUTOMATION_ID: AUTOMATION_ID,
+} as const;
+
+for (const [name, value] of Object.entries(required)) {
+  if (!value) throw new Error(`Missing required env var: ${name}`);
+}
+
+export { ORG_ID, WORKSPACE_ID, BASE_URL, AUTOMATION_ID };
+
+export const APP_URL = BASE_URL!.replace("/api/v1", "");
+
+export function kognitosRunUrl(runId: string): string {
+  return `${APP_URL}/organizations/${ORG_ID}/workspaces/${WORKSPACE_ID}/automations/${AUTOMATION_ID}/runs/${runId}`;
+}
+
+export async function req(path: string, options: RequestInit = {}): Promise<Response> {
+  const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  return fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+}
+```
+
+## `lib/arrow.ts` — Arrow IPC Decoding
+
+```typescript
+import { tableFromIPC } from "apache-arrow";
+
+export function decodeArrowTable(b64: string): Record<string, unknown>[] {
+  const buf = Buffer.from(b64, "base64");
+  const table = tableFromIPC(buf);
+
+  const rows: Record<string, unknown>[] = [];
+  for (let r = 0; r < table.numRows; r++) {
+    const row: Record<string, unknown> = {};
+    for (const field of table.schema.fields) {
+      const col = table.getChild(field.name);
+      row[field.name] = col?.get(r) ?? null;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+export function decodeArrowSchema(b64: string): { name: string; type: string }[] {
+  const buf = Buffer.from(b64, "base64");
+  const table = tableFromIPC(buf);
+  return table.schema.fields.map((f) => ({ name: f.name, type: String(f.type) }));
+}
+```
+
+## `lib/spy.ts` — Inline Code Execution
+
+Connection IDs must come from the automation's `connections` field or from the workspace connections list. Never hardcode them — pass them via env vars or fetch them from the API.
+
+```typescript
+import { req, ORG_ID, WORKSPACE_ID } from "./kognitos";
+import { tableFromIPC } from "apache-arrow";
+
+export interface SpyOutput {
+  number?: number;
+  text?: string;
+  table?: Record<string, unknown>[];
+  raw: unknown;
+}
+
+export interface SpyResult {
+  outputs: Record<string, SpyOutput>;
+  executionId?: string;
+}
+
+export async function runSpy(
+  code: string,
+  connections?: Record<string, { connection_id: string }>
+): Promise<SpyResult> {
+  const conns = connections ?? {};
+
+  const body: Record<string, unknown> = {
+    start_execution: {
+      organization_id: ORG_ID,
+      workspace_id: WORKSPACE_ID,
+      code,
+      no_recording: {},
+      ...(Object.keys(conns).length > 0 && { connections: conns }),
+    },
+  };
+
+  const res = await req(
+    `/organizations/${ORG_ID}/workspaces/${WORKSPACE_ID}/executions:run`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Spy execution request failed: ${res.status} ${await res.text()}`);
+  }
+
+  const data = await res.json();
+  const status = data.execution_status;
+
+  if (status?.failed) {
+    const desc = status.failed.error?.description ?? JSON.stringify(status.failed);
+    throw new Error(`Spy execution failed: ${desc}`);
+  }
+
+  if (!status?.completed) {
+    throw new Error(`Unexpected execution status: ${JSON.stringify(status).slice(0, 500)}`);
+  }
+
+  const executionId = data.execution_id as string | undefined;
+  const rawOutputs = (status.completed.outputs ?? {}) as Record<string, any>;
+  const outputs: Record<string, SpyOutput> = {};
+
+  for (const [key, val] of Object.entries(rawOutputs)) {
+    outputs[key] = parseOutput(val);
+  }
+
+  return { outputs, executionId };
+}
+
+function parseOutput(val: any): SpyOutput {
+  if (val.number != null) {
+    return { number: val.number.lo ?? 0, raw: val };
+  }
+  if (val.text != null) {
+    return { text: val.text, raw: val };
+  }
+  if (val.string != null) {
+    return { text: val.string.text ?? val.string, raw: val };
+  }
+  const b64 = val.table?.inline?.data;
+  if (b64) {
+    const buf = Buffer.from(b64, "base64");
+    const arrowTable = tableFromIPC(buf);
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < arrowTable.numRows; i++) {
+      const row: Record<string, unknown> = {};
+      for (const field of arrowTable.schema.fields) {
+        row[field.name] = arrowTable.getChild(field.name)?.get(i);
+      }
+      rows.push(row);
+    }
+    return { table: rows, raw: val };
+  }
+  return { raw: val };
+}
+```
+
+## `lib/quill.ts` — Quill Chat API
+
+```typescript
+import { req, ORG_ID, WORKSPACE_ID, AUTOMATION_ID } from "./kognitos";
+
+const RESOURCE_PREFIX = `organizations/${ORG_ID}/workspaces/${WORKSPACE_ID}`;
+
+export interface QuillSpyCode {
+  toolCallId: string;
+  code: string;
+}
+
+export interface QuillResult {
+  answer: string;
+  spyCode: QuillSpyCode[];
+  threadId: string;
+  executionIds: string[];
+  thinkingSteps: string[];
+}
+
+export async function createQuillThread(
+  automationId: string = AUTOMATION_ID!
+): Promise<string> {
+  const res = await req(
+    `/${RESOURCE_PREFIX}/agents/quill/threads`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        automation: `${RESOURCE_PREFIX}/automations/${automationId}`,
+      }),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to create Quill thread: ${res.status} ${await res.text()}`);
+  }
+  const data = await res.json();
+  return data.name.split("/threads/").pop()!;
+}
+
+export async function askQuill(
+  threadId: string,
+  question: string
+): Promise<QuillResult> {
+  const res = await req(
+    `/${RESOURCE_PREFIX}/agents/quill/threads/${threadId}:sendMessage`,
+    {
+      method: "POST",
+      headers: { Accept: "application/x-ndjson" },
+      body: JSON.stringify({
+        user_message: {
+          user_message: {
+            user_message_type: "user_query",
+            content_list: { items: [{ text: question }] },
+          },
+        },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Quill sendMessage failed: ${res.status} ${await res.text()}`);
+  }
+
+  const raw = await res.text();
+  return parseNdjsonResponse(raw, threadId);
+}
+
+function parseNdjsonResponse(raw: string, threadId: string): QuillResult {
+  const objects = extractJsonObjects(raw);
+
+  const spyCode: QuillSpyCode[] = [];
+  const executionIds: string[] = [];
+  const thinkingSteps: string[] = [];
+  let answer = "";
+
+  for (const obj of objects) {
+    if (obj.progress_notification?.progress_type === "thinking" && obj.progress_notification.content) {
+      thinkingSteps.push(obj.progress_notification.content);
+    }
+
+    if (obj.tool_call_request?.display_name === "mcp__custom_tools__execute_code") {
+      try {
+        const input = JSON.parse(obj.tool_call_request.input);
+        if (input.code) {
+          spyCode.push({
+            toolCallId: obj.tool_call_request.tool_call_id,
+            code: input.code,
+          });
+        }
+      } catch { /* malformed input */ }
+    }
+
+    if (obj.artifact?.artifact_type === "execution_reference") {
+      try {
+        const content = JSON.parse(obj.artifact.content);
+        if (content.execution_id) executionIds.push(content.execution_id);
+      } catch { /* malformed artifact */ }
+    }
+
+    if (obj.completion_response?.content) {
+      answer = obj.completion_response.content;
+    } else if (obj.agent_message?.content && obj.state === "STATE_COMPLETE") {
+      answer = obj.agent_message.content;
+    }
+  }
+
+  if (!answer) {
+    const lastAgent = [...objects].reverse().find((o) => o.agent_message?.content);
+    if (lastAgent) answer = lastAgent.agent_message.content;
+  }
+
+  return { answer, spyCode, threadId, executionIds, thinkingSteps };
+}
+
+function extractJsonObjects(raw: string): Record<string, any>[] {
+  const objects: Record<string, any>[] = [];
+  let depth = 0;
+  let start = -1;
+
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (raw[i] === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          objects.push(JSON.parse(raw.slice(start, i + 1)));
+        } catch { /* skip malformed */ }
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
+}
+
+export async function askQuillOneShot(
+  question: string,
+  automationId?: string
+): Promise<QuillResult> {
+  const threadId = await createQuillThread(automationId);
+  return askQuill(threadId, question);
+}
+```

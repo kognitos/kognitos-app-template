@@ -11,6 +11,9 @@ Cursor rules for building Kognitos dashboard applications on top of the Kognitos
 | [03-planning-build.mdc](./03-planning-build.mdc) | Phases 4-6: domain thinking, build plan, design system selection, app build |
 | [04-lattice-ui.mdc](./04-lattice-ui.mdc) | Lattice UI: installation, component mapping, tokens, layout rules, gotchas |
 | [05-npm-local-packages.mdc](./05-npm-local-packages.mdc) | Local npm packages: tarball installation to avoid duplicate dependencies |
+| [06-lib-reference.mdc](./06-lib-reference.mdc) | Reference implementations: API client, Arrow IPC, spy execution, Quill chat |
+| [07-scaffolding.mdc](./07-scaffolding.mdc) | Project scaffolding: config files, CSS setup, API routes, discovery scripts, deps |
+| [08-data-patterns.mdc](./08-data-patterns.mdc) | Data layer: generic run types, state helpers, safe decoding, transforms |
 
 ## Usage
 
