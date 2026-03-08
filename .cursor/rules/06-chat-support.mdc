@@ -9,13 +9,13 @@ alwaysApply: false
 ## Architecture
 
 ```
-Sidebar sessions list (client) ↔ useChat hook ↔ ChatProvider context
+App sidebar "Conversations" group (client) ↔ useChat hook ↔ ChatProvider context
   → POST /api/chat → Claude (Anthropic) with API tools → Kognitos REST API
   → SSE stream back to client
   → Messages persisted in Supabase
 ```
 
-Sessions and messages persist in Supabase. Claude answers questions using **registered API tools only** — it never runs arbitrary code. The chat UI lives at `/chat` with conversation history in the left sidebar.
+Sessions and messages persist in Supabase. Claude answers questions using **registered API tools only** — it never runs arbitrary code. The chat UI lives at `/chat` with conversation history in the app sidebar.
 
 ## Registered Tools
 
@@ -44,14 +44,32 @@ To add a new tool, define an `Anthropic.Tool` in the `TOOLS` array in `app/api/c
 - `remark-gfm` — GFM support (tables, strikethrough, task lists)
 - `@tailwindcss/typography` — Prose styling for rendered markdown
 
-## Supabase schema
+## Supabase Schema (CRITICAL — project-specific table names)
 
-Tables are defined in `supabase/migrations/00000000000001_chat.sql`:
+Tables are defined in `supabase/migrations/00000000000001_chat.sql`.
 
-- **chat_sessions** — id, user_id, title, created_at, updated_at
-- **chat_messages** — id, session_id, role (user/assistant/tool), content, tool_call (jsonb), created_at
+**Table names MUST be prefixed with the project name** (e.g. `provider_claims_chat_sessions`) to avoid collisions when multiple apps share the same Supabase instance. Use `snake_case` of the project's short name as the prefix.
+
+Example for a project called "Provider Claims":
+
+- **provider_claims_chat_sessions** — id, user_id, title, created_at, updated_at
+- **provider_claims_chat_messages** — id, session_id, role (user/assistant/tool), content, tool_call (jsonb), created_at
 
 RLS is enabled with permissive policies. Cascade delete from sessions to messages.
+
+## Session Auto-Titling (CRITICAL)
+
+Sessions must NOT stay as "New conversation". After the first user–assistant exchange, use Claude to generate a concise title (max 6 words) from the user's message.
+
+In `app/api/chat/route.ts`, after persisting the assistant response, check if it's the first exchange (message count ≤ 2). If so, call Claude with a short prompt like:
+
+```
+Generate a short title (max 6 words) for a chat that starts with this message. Return ONLY the title, no quotes or punctuation.
+
+User message: {message}
+```
+
+Update the session title in Supabase with the result. This runs after the main response stream, so it doesn't slow down the chat.
 
 ## Key files
 
@@ -62,21 +80,47 @@ RLS is enabled with permissive policies. Cascade delete from sessions to message
 | `lib/chat/system-prompt.ts` | Builds Claude system prompt; fetches + caches automation English code |
 | `lib/chat/use-chat.ts` | Client hook: sessions CRUD, SSE streaming, message state |
 | `lib/chat/chat-context.tsx` | React context provider — shares chat state between sidebar and chat page |
-| `app/api/chat/route.ts` | Main endpoint: Claude tool loop + SSE streaming + Supabase persistence |
+| `app/api/chat/route.ts` | Main endpoint: Claude tool loop + SSE streaming + Supabase persistence + auto-titling |
 | `app/api/chat/sessions/route.ts` | GET (list) + POST (create) sessions |
 | `app/api/chat/sessions/[id]/route.ts` | GET (with messages) + PATCH (title) + DELETE |
 | `app/chat/page.tsx` | Chat page: message bubbles with markdown, empty state, input |
-| `supabase/migrations/00000000000001_chat.sql` | Database schema for chat tables |
+| `supabase/migrations/00000000000001_chat.sql` | Database schema for chat tables (project-prefixed) |
 
-## UI integration
+## UI Integration (CRITICAL — sidebar placement)
 
-Chat sessions are listed in the app sidebar (under the "Chat" nav item) via `ChatProvider` context in `app/layout.tsx`. The sidebar shows sessions only when on `/chat`. Clicking "Chat" when already on the page creates a new conversation.
+Chat sessions are listed **inside the app sidebar** under a "Conversations" group — NOT in a separate middle panel on the chat page. The sidebar shows the conversations group only when the user is on `/chat`.
+
+### Sidebar structure when on `/chat`:
+
+```
+┌─────────────────────┐
+│ App Logo / Title     │
+│─────────────────────│
+│ Navigation           │
+│  ● Dashboard         │
+│─────────────────────│
+│ Conversations    [+] │
+│  ○ Session title 1   │
+│  ○ Session title 2   │
+│  ○ ...               │
+│─────────────────────│
+│ Open in Kognitos  ↗  │
+└─────────────────────┘
+```
+
+- Do NOT add a separate "Chat" nav item — the "Conversations" group label serves as the section header.
+- The `[+]` button next to "Conversations" creates a new session.
+- Each session item shows a delete action on hover via `SidebarMenuAction showOnHover`.
+- The chat page itself (`app/chat/page.tsx`) takes the full content width — no session list panel.
+
+The `ChatProvider` context wraps the app in `app/layout.tsx` so sidebar and chat page share state.
 
 The chat page uses plain divs (not PageLayout/PageContent) to ensure the input stretches full width. Assistant messages render markdown via `react-markdown` with `remark-gfm`.
 
 ## Customizing for a new app
 
-1. Update `lib/chat/system-prompt.ts` — change the domain context, automation description, and rules to match the new automation.
-2. Update tool descriptions in `TOOLS` array — tailor the `description` fields for the new domain.
-3. Update `executeTool` in `app/api/chat/route.ts` if outputs need different decoding (e.g., Arrow IPC tables vs markdown text).
-4. Update suggested questions in `app/chat/page.tsx` — the quick-start buttons should reflect common questions for the new domain.
+1. **Table prefix** — Choose a `snake_case` project prefix and apply it to both table names in the migration and all `.from("...")` calls in the API routes.
+2. Update `lib/chat/system-prompt.ts` — change the domain context, automation description, and rules to match the new automation.
+3. Update tool descriptions in `TOOLS` array — tailor the `description` fields for the new domain.
+4. Update `executeTool` in `app/api/chat/route.ts` if outputs need different decoding (e.g., Arrow IPC tables vs markdown text).
+5. Update suggested questions in `app/chat/page.tsx` — the quick-start buttons should reflect common questions for the new domain.
