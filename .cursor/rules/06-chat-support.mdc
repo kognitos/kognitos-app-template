@@ -48,8 +48,11 @@ The template ships with generic `list_runs`, `get_run`, and `get_automation` too
 
 - `@anthropic-ai/sdk` — Anthropic Claude SDK
 - `@supabase/supabase-js` — Supabase client
+- `@kognitos/lattice` — Lattice UI components (installed from local `.tgz`)
+- `react-markdown` + `remark-gfm` — Markdown rendering (alternative to Lattice `Markdown`)
+- `@tailwindcss/typography` — Tailwind `prose` classes for `react-markdown` rendering
 
-Lattice UI provides its own `Markdown` component — no need for `react-markdown` or `remark-gfm`.
+**Important:** `@tailwindcss/typography` must be in `dependencies`, NOT `devDependencies`. It is needed at build time and some deployment environments skip devDependencies.
 
 ## Supabase Schema (CRITICAL — project-specific table names)
 
@@ -264,9 +267,21 @@ The `ChatProvider` context wraps the app in `app/layout.tsx` so sidebar and chat
 
 ### Markdown rendering
 
-- Wrap assistant messages in `.chat-markdown` div and pass `textProps={{ level: "small" }}` to the Lattice `Markdown` component (see `04-lattice-ui.mdc` Chat Markdown Sizing).
-- Do NOT use Tailwind `prose` / `prose-sm` wrappers — they conflict with Lattice's own typography components.
-- For user message bubbles (`bg-primary`), apply `className="text-primary-foreground"` directly on the `Text` component to prevent dark mode color inheritance issues (see `04-lattice-ui.mdc` Dark Mode Gotchas).
+Two supported approaches — pick one per app and stay consistent:
+
+**Option A: Lattice `Markdown` component** (simpler, fewer deps)
+- Import `Markdown` from `@kognitos/lattice`
+- Wrap in a `.chat-markdown` div, pass `textProps={{ level: "small" }}`
+- The `.chat-markdown` heading styles in `globals.css` handle sizing
+
+**Option B: `react-markdown` + Tailwind Typography** (more control)
+- Import `ReactMarkdown` from `react-markdown` and `remarkGfm` from `remark-gfm`
+- Wrap in `prose prose-sm max-w-none dark:prose-invert` classes
+- Requires `@tailwindcss/typography` in `dependencies` and `@plugin '@tailwindcss/typography'` in `globals.css`
+
+Do NOT mix both approaches in the same app.
+
+For user message bubbles (`bg-primary`), apply `className="text-primary-foreground"` directly on the `Text` component to prevent dark mode color inheritance issues (see `04-lattice-ui.mdc` Dark Mode Gotchas).
 
 ## Customizing for a new app
 
@@ -277,3 +292,39 @@ The `ChatProvider` context wraps the app in `app/layout.tsx` so sidebar and chat
 5. **Suggestions** — Update the `SUGGESTIONS` array in `app/chat/page.tsx` with questions users of your domain would ask.
 6. **Chat page text** — Update the header subtitle and empty-state text to match your domain.
 7. **Sidebar** — Add a "Chat History" group to your `AppSidebar` using `useChatContext()` — see the reference implementation in Patient-Referral-Processing for the exact sidebar pattern.
+
+## Common Pitfalls (DO NOT do these)
+
+These mistakes were found repeatedly across apps built from this template. Treat them as a checklist when customizing.
+
+### Never remove `export const dynamic = "force-dynamic"` from API routes
+
+Every file in `app/api/chat/` **must** export `dynamic = "force-dynamic"`. Without it, Next.js may statically cache API routes during production builds on Vercel, causing stale or broken chat responses. The main chat route also needs `export const maxDuration = 60`.
+
+### Never hardcode table names — always use `TABLES`
+
+All Supabase queries must reference `TABLES.sessions` and `TABLES.messages` from `lib/supabase.ts`. Never use raw strings like `"chat_sessions"` or `"chat_messages"` anywhere in API routes or helpers. The `TABLES` constant exists so table names can be changed in one place.
+
+### Never add `import "dotenv/config"` to lib files
+
+Next.js loads `.env` files automatically. Adding `import "dotenv/config"` is redundant and can cause issues in edge runtimes. Only use `dotenv` in standalone scripts run with `tsx` (e.g. `scripts/verify-connection.ts`).
+
+### Never change the `required` type annotation in `lib/kognitos.ts`
+
+Keep `const required: Record<string, string | undefined> = { ... }` — do NOT change it to `as const`. The `Record` type is needed for `Object.entries()` to iterate correctly and the validation loop to work as intended.
+
+### Never remove the `AUTOMATION_ID` warning
+
+The `if (!AUTOMATION_ID) console.warn(...)` block in `lib/kognitos.ts` gives developers early feedback when the optional env var is missing. Do not remove it.
+
+### Never strip vars from `.env.example`
+
+`.env.example` must always list **all** required env vars across all sections (Kognitos, Supabase, Anthropic). This is the developer's only guide for setting up the project. If a var is missing here, it will be missed during setup.
+
+### Always keep the dev port in the `dev` script
+
+The `"dev": "next dev --port XXXX"` script must specify a unique port. Without it, the app defaults to port 3000, which conflicts with other apps running simultaneously. Each app should have its own port.
+
+### `@tailwindcss/typography` belongs in `dependencies`, not `devDependencies`
+
+This is a build-time dependency used by Tailwind's CSS processing. Some deployment environments (Vercel, Docker) skip `devDependencies`, which will break the production build if this package is in the wrong section.
