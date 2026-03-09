@@ -94,7 +94,17 @@ Update the session title in Supabase with the result. This runs after the main r
 
 Use `anthropic.messages.stream()` — NOT `anthropic.messages.create()` — for real token-by-token streaming. The `.on("text", callback)` handler sends each token as an SSE event immediately:
 
+The `send()` helper must be **defensive** — the client can disconnect mid-stream, causing `controller.enqueue()` to throw inside the `stream.on("text")` callback:
+
 ```typescript
+let streamClosed = false;
+const send = (data: Record<string, unknown>) => {
+  if (streamClosed) return;
+  try {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+  } catch { streamClosed = true; }
+};
+
 const stream = anthropic.messages.stream({ model, max_tokens, system, tools, messages });
 stream.on("text", (text) => {
   fullResponse += text;
@@ -118,10 +128,11 @@ if (iteration > 0 && fullResponse.length > 0) {
 
 **Always** store the assistant message in Supabase after each turn — even when `fullAssistantResponse` is empty (tool-only responses). If you skip the insert when the text is empty, the next turn loads `[user1, user2]` from Supabase (two consecutive user messages), which the Anthropic API rejects with a 400 error.
 
+Store an empty string for tool-only responses — do NOT use a literal placeholder like `"(tool-only response)"` because it leaks into the UI when messages are reloaded.
+
 ```typescript
-const contentToStore = fullAssistantResponse || "(tool-only response)";
 await supabaseAdmin.from(TABLES.messages)
-  .insert({ session_id: sessionId, role: "assistant", content: contentToStore });
+  .insert({ session_id: sessionId, role: "assistant", content: fullAssistantResponse || "" });
 ```
 
 ### Consecutive-role merge (safety net)
@@ -142,7 +153,21 @@ for (const msg of filtered) {
 
 ## Error Handling (CRITICAL)
 
-### Server side
+### Per-tool error catching
+
+Catch errors from individual tool executions and pass the error as the tool result. This lets Claude explain the failure gracefully instead of aborting the entire stream:
+
+```typescript
+let result: string;
+try {
+  result = await executeTool(block.name, block.input as Record<string, unknown>);
+} catch (e) {
+  result = `Tool error: ${e instanceof Error ? e.message : "Unknown error"}`;
+}
+toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
+```
+
+### Server-side stream errors
 
 Wrap the SSE error send in try-catch (the controller may already be closed) and always log:
 
@@ -155,17 +180,37 @@ Wrap the SSE error send in try-catch (the controller may already be closed) and 
 }
 ```
 
-### Client side
+### Client-side error handling
 
-The SSE reader must handle `"error"` events — do NOT silently ignore them. Surface errors in the chat UI:
+The SSE reader must handle `"error"` events — do NOT silently ignore them. Also surface non-OK HTTP responses and network errors:
 
 ```typescript
+// SSE event handling
 } else if (event.type === "error") {
   setError(event.content ?? "Something went wrong");
+}
+
+// Non-OK response
+if (!res.ok || !res.body) {
+  setError(`Failed to send message (${res.status})`);
+  return;
+}
+
+// Network errors (in the outer catch)
+} catch (err) {
+  setError(err instanceof Error ? err.message : "Network error");
 }
 ```
 
 Expose `error: string | null` from `ChatProvider` and render a destructive-styled bubble in the chat page when non-null. Clear the error when the user sends a new message.
+
+### ChatStreamEvent type
+
+The `ChatStreamEvent` type must include ALL event types the server sends: `"text" | "tool_use" | "tool_result" | "done" | "error" | "title"`. Missing `"title"` from the union is a common oversight.
+
+### System prompt caching
+
+Use `null` as the sentinel for "not yet fetched" and check `cachedCode !== null` (not truthiness). An empty `english_code` is a valid cached value. Network failures should NOT be cached — leave `cachedCode` as `null` to allow retry on the next request.
 
 ## Key files
 
