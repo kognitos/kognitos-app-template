@@ -114,6 +114,59 @@ if (iteration > 0 && fullResponse.length > 0) {
 }
 ```
 
+## Persisting Assistant Messages (CRITICAL)
+
+**Always** store the assistant message in Supabase after each turn — even when `fullAssistantResponse` is empty (tool-only responses). If you skip the insert when the text is empty, the next turn loads `[user1, user2]` from Supabase (two consecutive user messages), which the Anthropic API rejects with a 400 error.
+
+```typescript
+const contentToStore = fullAssistantResponse || "(tool-only response)";
+await supabaseAdmin.from(TABLES.messages)
+  .insert({ session_id: sessionId, role: "assistant", content: contentToStore });
+```
+
+### Consecutive-role merge (safety net)
+
+Before sending loaded messages to Claude, merge any consecutive same-role messages with `\n\n`. This protects against orphaned DB rows from earlier bugs:
+
+```typescript
+const merged: Anthropic.MessageParam[] = [];
+for (const msg of filtered) {
+  const last = merged[merged.length - 1];
+  if (last && last.role === msg.role) {
+    last.content = last.content + "\n\n" + msg.content;
+  } else {
+    merged.push(msg);
+  }
+}
+```
+
+## Error Handling (CRITICAL)
+
+### Server side
+
+Wrap the SSE error send in try-catch (the controller may already be closed) and always log:
+
+```typescript
+} catch (err) {
+  console.error("[chat] Stream error:", err);
+  try { send({ type: "error", content: err.message }); } catch {}
+} finally {
+  controller.close();
+}
+```
+
+### Client side
+
+The SSE reader must handle `"error"` events — do NOT silently ignore them. Surface errors in the chat UI:
+
+```typescript
+} else if (event.type === "error") {
+  setError(event.content ?? "Something went wrong");
+}
+```
+
+Expose `error: string | null` from `ChatProvider` and render a destructive-styled bubble in the chat page when non-null. Clear the error when the user sends a new message.
+
 ## Key files
 
 | File | Purpose |
