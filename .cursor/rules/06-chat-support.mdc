@@ -9,7 +9,7 @@ alwaysApply: false
 ## Architecture
 
 ```
-App sidebar "Conversations" group (client) ↔ useChat hook ↔ ChatProvider context
+App sidebar "Chat" nav + session list (client) ↔ useChat hook ↔ ChatProvider context
   → POST /api/chat → Claude (Anthropic) streaming with API tools → Kognitos REST API
   → SSE stream back to client (token-by-token)
   → Messages persisted in Supabase
@@ -229,7 +229,7 @@ Use `null` as the sentinel for "not yet fetched" and check `cachedCode !== null`
 
 ## UI Integration (CRITICAL — sidebar placement)
 
-Chat sessions are listed **inside the app sidebar** under a "Conversations" group — NOT in a separate middle panel on the chat page. The conversations group is **always visible** regardless of the current route.
+Chat sessions are listed **inside the app sidebar** — NOT in a separate middle panel on the chat page. The session list is **always visible** regardless of the current route.
 
 ### Sidebar structure:
 
@@ -239,10 +239,9 @@ Chat sessions are listed **inside the app sidebar** under a "Conversations" grou
 │─────────────────────│
 │ Navigation           │
 │  ● Dashboard         │
-│  ○ Chat              │
+│  ○ Chat              │  ← navigates to /chat, clears active session, shows empty state with suggestions
 │─────────────────────│
-│ Conversations        │
-│  ○ Session title 1   │
+│  ○ Session title 1   │  ← shown only when sessions exist, no group header
 │  ○ Session title 2   │
 │  ○ ...               │
 │─────────────────────│
@@ -250,8 +249,10 @@ Chat sessions are listed **inside the app sidebar** under a "Conversations" grou
 └─────────────────────┘
 ```
 
+- "Chat" is a nav item under Navigation. Clicking it clears the active session (`setActiveSessionId(null)`) and navigates to `/chat`, showing the empty state with suggested questions.
+- Past sessions appear in a **separate headerless group** below Navigation (no "Conversations" label, no `[+]` button). This group only renders when `sessions.length > 0`.
 - Clicking a session loads its messages and navigates to `/chat` (if not already there).
-- Each session item shows a delete action on hover via `SidebarMenuAction`.
+- Each session item shows a delete action on hover via `SidebarMenuAction showOnHover`.
 - The chat page itself (`app/chat/page.tsx`) takes the full content width — no session list panel.
 
 The `ChatProvider` context wraps the app in `app/layout.tsx` so sidebar and chat page share state.
